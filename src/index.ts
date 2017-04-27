@@ -26,7 +26,7 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
   const log = console.debug === undefined ? console.log : console.debug
 
   return function deepstreamDriver(action$) {
-    // Internal event emitter to delegate between action and response 
+    // Internal event emitter to delegate between action and response
     const driverEvents = new EventEmitter()
 
     // The stream of events we will return from this driver:
@@ -60,31 +60,34 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
       }
     }
 
-    function getRecord(name: string, scope?: string): Promise<deepstreamIO.Record> {
+    function getCacheName(name: string, scope?: string): string {
       if (typeof scope !== 'undefined') {
         name = name + scope
       }
+      return name;
+    }
+
+    function getRecord(name: string, scope?: string): Promise<deepstreamIO.Record> {
+      let cacheName = getCacheName(name, scope);
       return new Promise((resolve, reject) => {
-        const record = cachedRecords[name] === undefined ?
-          client.record.getRecord(name) : cachedRecords[name]
+        const record = cachedRecords[cacheName] === undefined ?
+            client.record.getRecord(name) : cachedRecords[cacheName]
         record.on('error', /* istanbul ignore next */(err: string) => reject(err))
         record.whenReady((record: deepstreamIO.Record) => {
-          cachedRecords[name] = record
+          cachedRecords[cacheName] = record
           resolve(record)
         })
       })
     }
 
     function getList(name: string, scope?: string): Promise<deepstreamIO.List> {
-      if (typeof scope !== 'undefined') {
-        name = name + scope
-      }
+      let cacheName = getCacheName(name, scope);
       return new Promise((resolve, reject) => {
-        const list = cachedLists[name] === undefined ?
-          client.record.getList(name) : cachedLists[name]
+        const list = cachedLists[cacheName] === undefined ?
+          client.record.getList(name) : cachedLists[cacheName]
         list.on('error', /* istanbul ignore next */(err: string) => reject(err))
         list.whenReady((list: deepstreamIO.List) => {
-          cachedLists[name] = list
+          cachedLists[cacheName] = list
           resolve(list)
         })
       })
@@ -172,7 +175,7 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
           'record.error': true
         }, intent.events)
         logAction(intent.action, intent.name, intent.events ? stringify(intent.events) : '')
-        getRecord(intent.name).then(record => {
+        getRecord(intent.name, intent.scope).then(record => {
           if (events['record.change']) {
             record.subscribe((data: Object) => {
               emit({ event: 'record.change', name: record.name, data: data }, intent.scope)
@@ -204,7 +207,7 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
     const recordGetListener = recordGet$.addListener({
       next: intent => {
         logAction(intent.action, intent.name)
-        getRecord(intent.name).then(record => {
+        getRecord(intent.name, intent.scope).then(record => {
           emit({ event: 'record.get', name: record.name, data: record.get() }, intent.scope)
         })
       },
@@ -239,7 +242,7 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
             emit({ event: 'record.set', name: intent.name }, intent.scope)
           }
         }
-        getRecord(intent.name).then(record => {
+        getRecord(intent.name, intent.scope).then(record => {
           if (typeof intent.path === 'undefined') {
             if (intent.acknowledge) {
               record.set(intent.data, writeCallback)
@@ -264,10 +267,10 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
     const recordDeleteListener = recordDelete$.addListener({
       next: intent => {
         logAction(intent.action, intent.name)
-        getRecord(intent.name).then(record => {
+        getRecord(intent.name, intent.scope).then(record => {
           record.unsubscribe()
           record.delete()
-          delete cachedRecords[record.name]
+          delete cachedRecords[getCacheName(record.name, intent.scope)]
         })
       },
       error: noop,
@@ -279,10 +282,11 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
     const recordDiscardListener = recordDiscard$.addListener({
       next: intent => {
         logAction(intent.action, intent.name)
-        getRecord(intent.name).then(record => {
+        getRecord(intent.name, intent.scope).then(record => {
           record.unsubscribe()
           record.discard()
-          delete cachedRecords[record.name]
+          console.log("discarding", getCacheName(record.name, intent.scope));
+          delete cachedRecords[getCacheName(record.name, intent.scope)]
         })
       },
       error: noop,
@@ -320,7 +324,7 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
           'list.entry-removed': true
         }, intent.events)
         logAction(intent.action, intent.name, intent.events ? stringify(intent.events) : '')
-        getList(intent.name).then(list => {
+        getList(intent.name, intent.scope).then(list => {
           // Is this the first time the subscription callback is called?
           let callbackFirstCall = true
           list.subscribe((data: Array<string>) => {
@@ -376,7 +380,7 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
     const listGetEntriesListener = listGetEntries$.addListener({
       next: intent => {
         logAction(intent.action, intent.name)
-        getList(intent.name).then(list => {
+        getList(intent.name, intent.scope).then(list => {
           emit({ event: 'list.getEntries', name: list.name, data: list.getEntries() }, intent.scope)
         })
       },
@@ -390,7 +394,7 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
     const listSetEntriesListener = listSetEntries$.addListener({
       next: (intent: ListSetIntent) => {
         logAction(intent.action, intent.name)
-        getList(intent.name).then(list => {
+        getList(intent.name, intent.scope).then(list => {
           list.setEntries(intent.entries)
         })
       },
@@ -404,7 +408,7 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
     const listAddEntryListener = listAddEntry$.addListener({
       next: (intent: ListEntryIntent) => {
         logAction(intent.action, intent.name, intent.entry)
-        getList(intent.name).then(list => {
+        getList(intent.name, intent.scope).then(list => {
           list.addEntry(intent.entry, intent.index)
         })
       },
@@ -418,7 +422,7 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
     const listRemoveEntryListener = listRemoveEntry$.addListener({
       next: (intent: ListEntryIntent) => {
         logAction(intent.action, intent.name, intent.entry)
-        getList(intent.name).then(list => {
+        getList(intent.name, intent.scope).then(list => {
           list.removeEntry(intent.entry, intent.index)
         })
       },
@@ -431,9 +435,9 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
     const listDeleteListener = listDelete$.addListener({
       next: intent => {
         logAction(intent.action, intent.name)
-        getList(intent.name).then(list => {
+        getList(intent.name, intent.scope).then(list => {
           list.delete()
-          delete cachedLists[list.name]
+          delete cachedLists[getCacheName(list.name, intent.scope)]
         })
       },
       error: noop,
@@ -445,9 +449,9 @@ export function makeDeepstreamDriver({url, options = {}, debug = false}:
     const listDiscardListener = listDiscard$.addListener({
       next: intent => {
         logAction(intent.action, intent.name)
-        getList(intent.name).then(list => {
+        getList(intent.name, intent.scope).then(list => {
           list.discard()
-          delete cachedLists[list.name]
+          delete cachedLists[getCacheName(list.name, intent.scope)]
         })
       },
       error: noop,
